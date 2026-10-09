@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0d10">
+<title>Painel B3 Futuros</title>
+<link rel="manifest" href="index.json">
+<style>
+:root{--bg:#0b0d10;--card:#12161b;--bd:#1f252d;--tx:#e6e9ee;--mu:#7f8895;--up:#22c55e;--dn:#ef4444;--y:#eab308}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:12px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1500px;margin:0 auto;padding:12px}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-size:11px;color:var(--y);border:1px solid #4a3d0c;background:#1d1a0a;border-radius:4px;padding:2px 8px}
+.badge.live{color:var(--up);border-color:#14532d;background:#08170d}
+.grid{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:12px;align-items:start}
+@media(max-width:960px){.grid{grid-template-columns:1fr}}
+h2{text-align:center;font-size:19px;font-weight:700;letter-spacing:.06em;margin:4px 0 10px}
+h2 small{display:block;font-size:11px;font-weight:400;color:var(--mu);letter-spacing:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;margin-bottom:10px}
+.card h3{margin:0 0 4px;font-size:11px;font-weight:600;text-align:center}
+.row{display:flex;justify-content:space-between;padding:2px 0}
+.row span{color:var(--mu)}
+.up{color:var(--up)}.dn{color:var(--dn)}
+svg{width:100%;display:block}
+.gl{display:flex;align-items:center;gap:6px}.gl>div:first-child{flex:0 0 84px}.gl>div:last-child{flex:1;min-width:0}
+.legend{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;font-size:10px;color:var(--mu);margin-top:2px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
+.hft{height:8px;background:#1b2128;border-radius:4px;position:relative;overflow:hidden;margin-top:3px}
+.hft b{position:absolute;top:0;bottom:0}
+.vazio{color:var(--mu);text-align:center;margin:18px 6px;font-size:11px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:560px){.two{grid-template-columns:1fr}}
+.two .card{margin-bottom:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"><b style="font-size:14px">Painel B3 Futuros</b><span id="clock" style="font-variant-numeric:tabular-nums"></span><span id="badge" class="badge"></span></div>
+  <div class="grid">
+    <section><h2>DÓLAR<small>USD/BRL</small></h2><div id="wdo"></div></section>
+    <section><h2>CENÁRIO MACRO<small>Bolsas, moedas, juros e ADRs</small></h2>
+      <div class="two">
+        <div class="card"><h3>Blue Chips IBOV (% no dia)</h3><div id="bc"></div></div>
+        <div class="card"><h3>Mercados Internacionais (% no dia)</h3><div id="intl"></div></div>
+      </div>
+      <div class="card"><h3>Moedas (USD/moeda, variação %)</h3><div id="moedas"></div><div class="legend" id="moedas-l"></div></div>
+      <div class="card"><h3>Juros (taxa %)</h3><div id="juros"></div><div class="legend" id="juros-l"></div></div>
+      <div class="card"><h3>ADRs (variação %)</h3><div id="adrs"></div><div class="legend" id="adrs-l"></div></div>
+    </section>
+    <section><h2>ÍNDICE<small>IBOV Futuro</small></h2><div id="win"></div></section>
+  </div>
+</div>
+
+<!-- ===== Fonte de dados: as mesmas tabelas do painel original, escondidas =====
+     O streaming do Investing escreve nelas; o painel só lê os valores. -->
+<div id="fonte" hidden></div>
+<button class="add-button" hidden></button>
+<script>
+document.getElementById('fonte').innerHTML=['eua','curva','commodities','dx','brasil','emergentes','latam','dolar','europa','cryptos'].map(k=>
+ `<table><caption><div class="row"><div class="col-6">${k}</div><div class="col-6 text-right"><span class="avg">0.00%</span></div></div></caption>
+ <thead><tr><th>Ativo</th><th>Percentil</th><th>%</th><th>Último</th></tr></thead><tbody id="${k}-table"></tbody></table>`).join('');
+</script>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="js/popper.min.js"></script>
+<script src="js/bootstrap.min.js"></script>
+<script src="js/sockjs.min.js"></script>
+<script>
+/* Lê as mensagens brutas do streaming para pegar campos extras (máxima, mínima, fechamento anterior).
+   Abra o painel com ?debug no final do endereço para ver as mensagens no console (F12). */
+window.Q={};
+(function(){
+ function ingest(d){if(typeof d!=='string')return;let s=d;for(let i=0;i<4&&s.indexOf('\\"')>-1;i++)s=s.replace(/\\"/g,'"');
+  const re=/\{[^{}]*"pid"\s*:\s*"?(\d+)"?[^{}]*\}/g;let m;
+  while((m=re.exec(s))){try{const o=JSON.parse(m[0]);Q[o.pid]=Object.assign(Q[o.pid]||{},o)}catch(e){}}
+  if(/[?&]debug/.test(location.search))console.log('stream:',d.slice(0,300))}
+ const O=window.SockJS;if(!O)return;
+ function W(u,a,b){const s=new O(u,a,b);if(s.addEventListener)s.addEventListener('message',e=>ingest(e.data));return s}
+ W.prototype=O.prototype;Object.keys(O).forEach(k=>W[k]=O[k]);window.SockJS=W;
+})();
+</script>
+<script>var TimeZoneID=12,stream="https://streaming.forexpros.com",timezoneOffset=-10800;function refresher(){void(0)}</script>
+<script src="js/summary.js" defer></script>
+<script src="js/fxindex.js"></script>
+<script src="js/main-1.17.254.min.js"></script>
+<script src="js/tables.js" defer></script>
+<script src="js/index.js" defer></script>
+
+<script>
+/* ===== 1. CONFIGURAÇÃO ===== 
+   pid = ID do ativo no Investing (o mesmo usado em js/tables.js). Sem pid, o ativo fica sem dado ao vivo. */
+const CFG={
+  bc:['VALE3','PETR4','ITUB4','BBDC4','BBAS3','ABEV3','WEGE3','B3SA3'].map(n=>({n})),
+  intl:[{n:'S&P',pid:8839},{n:'Nasdaq',pid:8874},{n:'Dow',pid:8873},{n:'Stoxx',pid:40823},{n:'FTSE',pid:27},{n:'DAX',pid:8826},{n:'CAC',pid:167},{n:'Milão',pid:177}],
+  moedas:[{n:'BRL',c:'#22c55e',pid:2103},{n:'MXN',c:'#eab308',pid:39},{n:'EUR',c:'#38bdf8',pid:2124},{n:'JPY',c:'#f97316',pid:3},{n:'GBP',c:'#a78bfa',pid:2126},{n:'CLP',c:'#f472b6',pid:2110}],
+  juros:[{n:'BRL10Y',c:'#22c55e',pid:24029},{n:'US2Y',c:'#eab308',pid:23701},{n:'US10Y',c:'#38bdf8',pid:23705},{n:'US30Y',c:'#f97316',pid:23706}],
+  adrs:[{n:'VALE',c:'#22c55e'},{n:'PBR',c:'#eab308'},{n:'ITUB',c:'#38bdf8'},{n:'BBD',c:'#f97316'},{n:'ABEV',c:'#a78bfa'}],
+  src:{moedas:'pcp',juros:'last',adrs:'pcp'},      /* pcp = variação %, last = último preço */
+  side:{wdo:{n:'USD/BRL',pid:2103,dec:4,escala:1e5,aj:5.25,ab:5.22},win:{n:'IBOV Futuro',pid:941612,dec:0,escala:1e6,aj:182330,ab:182100}}
+};
+
+/* ===== 2. UTILITÁRIOS E ESTADO ===== */
+const N=60,MAX=300,Y='#eab308',G='#22c55e',SIDES=['wdo','win'],SER=['moedas','juros','adrs'];
+const $=s=>document.querySelector(s),last=a=>a[a.length-1];
+const fmt=(n,d=2)=>n.toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
+const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,v));
+const cls=n=>n>=0?'up':'dn',esc=s=>s.replace(/&/g,'&amp;');
+const rw=(n,step,start=0)=>{let v=start;return Array.from({length:n},()=>v+=(Math.random()-.5)*step)};
+let live=false;
+const S={bc:{},intl:{},ser:{moedas:{},juros:{},adrs:{}},lv:{}};
+CFG.bc.forEach(i=>S.bc[i.n]=(Math.random()-.4)*2);
+CFG.intl.forEach(i=>S.intl[i.n]=(Math.random()-.5)*2);
+SER.forEach(g=>CFG[g].forEach((i,x)=>S.ser[g][i.n]=rw(N,g==='juros'?.03:.25,g==='juros'?4+x*.3:0)));
+SIDES.forEach(k=>{const c=CFG.side[k];
+  S[k]={fe:0,fb:0,ae:0,ab:0,hft:0,fl:{b:rw(N,10),e:rw(N,10)},ag:{b:rw(N,8),e:rw(N,8)},aj:c.aj,op:c.ab,px:c.ab,hi:c.ab,lo:c.ab};
+  S.lv[k]={last:null,pcp:null,hi:null,lo:null,ph:[],qh:null,ql:null,qc:null,qo:null}});
+
+/* converte "5.255,50", "+0,35%" ou "5255.50" em número */
+function num(s){s=s.replace(/[^\d,.\-+]/g,'');const c=s.lastIndexOf(','),d=s.lastIndexOf('.');
+  if(c>-1&&d>-1)s=c>d?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
+  else if(c>-1)s=s.replace(',','.');
+  else if(/^[+-]?\d{1,3}(\.\d{3})+$/.test(s))s=s.replace(/\./g,'');
+  const v=parseFloat(s);return isNaN(v)?null:v}
+const rd=(pid,k)=>{const e=document.querySelector('.pid-'+pid+'-'+k);return e?num(e.textContent):null};
+
+/* ===== 3. GRÁFICOS (SVG puro) ===== */
+function line(series,h=110,w=330){
+  series=series.filter(s=>s.data.length>=2);
+  if(!series.length)return '<p class="vazio">Coletando dados…</p>';
+  const all=series.flatMap(s=>s.data),mn=Math.min(...all),mx=Math.max(...all),r=(mx-mn)||1,pl=4,pr=38;
+  const X=(i,n)=>pl+i*(w-pl-pr)/(n-1),Yy=v=>6+(h-12)*(1-(v-mn)/r);
+  let g='';for(let i=0;i<4;i++){const y=6+(h-12)*i/3;
+    g+=`<line x1="${pl}" x2="${w-pr}" y1="${y}" y2="${y}" stroke="#1f252d"/><text x="${w-pr+3}" y="${y+3}" fill="#7f8895" font-size="8">${fmt(mx-r*i/3,2)}</text>`}
+  const p=series.map(s=>{const n=s.data.length,d=s.data.map((v,i)=>`${i?'L':'M'}${X(i,n).toFixed(1)},${Yy(v).toFixed(1)}`).join(''),lv=last(s.data);
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.5"/><rect x="${w-pr+1}" y="${Yy(lv)-6}" width="35" height="11" rx="2" fill="${s.color}"/><text x="${w-pr+18.5}" y="${Yy(lv)+3}" fill="#000" font-size="8" text-anchor="middle" font-weight="700">${fmt(lv,2)}</text>`}).join('');
+  return `<svg viewBox="0 0 ${w} ${h}">${g}${p}</svg>`}
+
+function bars(items,h=150,w=300){
+  items=items.filter(i=>i.v!==null&&i.v!==undefined);
+  if(!items.length)return '<p class="vazio">Sem dados. Preencha o pid de cada ativo em CFG.</p>';
+  const m=Math.max(...items.map(i=>Math.abs(i.v)),.1),n=items.length,bw=w/n,y0=(h-2)/2,k=(h-40)/2/m;
+  return `<svg viewBox="0 0 ${w} ${h}"><line x1="0" x2="${w}" y1="${y0}" y2="${y0}" stroke="#2a313b"/>`+items.map((it,i)=>{
+    const x=i*bw+bw*.18,hh=Math.max(Math.abs(it.v)*k,1),y=it.v>=0?y0-hh:y0,c=it.v>=0?G:'#ef4444',cx=x+bw*.32;
+    return `<rect x="${x}" y="${y}" width="${bw*.64}" height="${hh}" rx="1" fill="${c}"/>
+    <text x="${cx}" y="${it.v>=0?y-3:y+hh+9}" fill="${c}" font-size="7.5" text-anchor="middle">${fmt(it.v)}%</text>
+    <text x="${cx}" y="${h-2}" fill="#7f8895" font-size="7" text-anchor="middle">${esc(it.n)}</text>`}).join('')+`</svg>`}
+
+function gauge(v){
+  const L=87.96,s=L/3,a=Math.PI*(1-v/100),nx=40+24*Math.cos(a),ny=38-24*Math.sin(a);
+  const seg=(o,c)=>`<path d="M12,38A28,28 0 0 1 68,38" fill="none" stroke="${c}" stroke-width="5" stroke-dasharray="${s-1} ${L}" stroke-dashoffset="${-o}"/>`;
+  return `<svg viewBox="0 0 80 52">${seg(0,'#ef4444')}${seg(s,Y)}${seg(2*s,G)}<line x1="40" y1="38" x2="${nx}" y2="${ny}" stroke="#fff" stroke-width="1.5"/><circle cx="40" cy="38" r="2.5" fill="#fff"/><text x="40" y="50" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">${Math.round(v)}</text></svg>`}
+
+const legend=a=>a.map(i=>`<span><i style="background:${i.c}"></i>${i.n}</span>`).join('');
+SER.forEach(g=>$('#'+g+'-l').innerHTML=legend(CFG[g]));
+
+/* ===== 4. PAINÉIS LATERAIS ===== */
+const demoSide=k=>`
+<div class="card"><div class="row"><span>Fluxo Estrangeiro</span><b id="${k}-fe"></b></div><div class="row"><span>Fluxo Bancos</span><b id="${k}-fb"></b></div></div>
+<div class="card"><h3>Evolução do Fluxo</h3><div class="gl"><div id="${k}-g1"></div><div id="${k}-c1"></div></div>
+  <div class="legend"><span><i style="background:${Y}"></i>Bancos</span><span><i style="background:${G}"></i>Estrangeiro</span></div></div>
+<div class="card"><div class="row"><span>Agressões Estrangeiro</span><b id="${k}-ae"></b></div><div class="row"><span>Agressões Bancos</span><b id="${k}-ab"></b></div>
+  <div class="row"><span>Saldo HFT</span><b id="${k}-hv"></b></div><div class="hft"><b id="${k}-hb"></b></div></div>
+<div class="card"><h3>Evolução das Agressões</h3><div class="gl"><div id="${k}-g2"></div><div id="${k}-c2"></div></div>
+  <div class="legend"><span><i style="background:${Y}"></i>Bancos</span><span><i style="background:${G}"></i>Estrangeiro</span></div></div>
+<div class="card"><h3>Ativos do Dia</h3>
+  <div class="row"><span>Ajuste</span><b id="${k}-aj"></b></div><div class="row"><span>Abertura</span><b id="${k}-op"></b></div>
+  <div class="row"><span>Máxima</span><b id="${k}-hi"></b></div><div class="row"><span>Mínima</span><b id="${k}-lo"></b></div>
+  <div class="row"><span>Amplitude</span><b id="${k}-am"></b></div></div>`;
+const liveSide=k=>`
+<div class="card"><div class="row"><span>${CFG.side[k].n}</span><b id="${k}-l"></b></div><div class="row"><span>Variação no dia</span><b id="${k}-p"></b></div></div>
+<div class="card"><h3>Evolução do preço</h3><div id="${k}-c"></div></div>
+<div class="card"><h3>Fluxo, agressões e saldo HFT</h3><p class="vazio">Sem fonte conectada. Esses dados vêm de order flow (B3 ou corretora), não do Investing.</p></div>
+<div class="card"><h3>Ativos do Dia</h3>
+  <div class="row"><span>Fech. anterior (≈ ajuste)</span><b id="${k}-aj"></b></div>
+  <div class="row"><span>Abertura</span><b id="${k}-op"></b></div>
+  <div class="row"><span>Máxima</span><b id="${k}-hi" class="up"></b></div>
+  <div class="row"><span>Mínima</span><b id="${k}-lo" class="dn"></b></div>
+  <div class="row"><span>Amplitude</span><b id="${k}-am"></b></div>
+  <p class="vazio" id="${k}-nt" style="margin:6px 0 0"></p></div>`;
+SIDES.forEach(k=>$('#'+k).innerHTML=demoSide(k));
+
+/* ===== 5. DESENHO ===== */
+function draw(){
+  SIDES.forEach(k=>{
+    const g=id=>$(`#${k}-${id}`),t=(id,v,c)=>{g(id).textContent=v;if(c)g(id).className=c},d=CFG.side[k].dec;
+    if(live){const s=S.lv[k];
+      t('l',s.last===null?'—':fmt(s.last,d));t('p',s.pcp===null?'—':(s.pcp>0?'+':'')+fmt(s.pcp)+'%',s.pcp===null?'':cls(s.pcp));
+      g('c').innerHTML=line([{color:G,data:s.ph}]);
+      const H=s.qh!==null?s.qh:s.hi,Lo=s.ql!==null?s.ql:s.lo,f=v=>v===null?'—':fmt(v,d);
+      t('aj',f(s.qc));t('op',f(s.qo));t('hi',f(H));t('lo',f(Lo));t('am',H===null?'—':f(H-Lo));
+      t('nt',s.qh!==null?'Máxima, mínima e fechamento anterior enviados pelo Investing.':'O Investing não enviou máx./mín. deste ativo: mostrando as observadas desde que o painel abriu.');return}
+    const s=S[k];
+    t('fe','R$ '+fmt(s.fe,0),cls(s.fe));t('fb','R$ '+fmt(s.fb,0),cls(s.fb));t('ae',fmt(s.ae,0));t('ab',fmt(s.ab,0));
+    t('hv',(s.hft>0?'+':'')+fmt(s.hft,0),cls(s.hft));
+    const w=Math.min(Math.abs(s.hft)/500,1)*50;
+    g('hb').style.cssText=`background:${s.hft>=0?G:'#ef4444'};width:${w}%;left:${s.hft>=0?50:50-w}%`;
+    g('g1').innerHTML=gauge(clamp(50+last(s.fl.e)-last(s.fl.b)));
+    g('c1').innerHTML=line([{color:Y,data:s.fl.b},{color:G,data:s.fl.e}]);
+    g('g2').innerHTML=gauge(clamp(50+last(s.ag.e)-last(s.ag.b)));
+    g('c2').innerHTML=line([{color:Y,data:s.ag.b},{color:G,data:s.ag.e}]);
+    t('aj',fmt(s.aj,d));t('op',fmt(s.op,d));t('hi',fmt(s.hi,d),'up');t('lo',fmt(s.lo,d),'dn');t('am',fmt(s.hi-s.lo,d));
+  });
+  $('#bc').innerHTML=bars(CFG.bc.map(i=>({n:i.n,v:S.bc[i.n]})));
+  $('#intl').innerHTML=bars(CFG.intl.map(i=>({n:i.n,v:S.intl[i.n]})));
+  SER.forEach(g=>$('#'+g).innerHTML=line(CFG[g].map(i=>({color:i.c,data:S.ser[g][i.n]})),130,640));
+}
+
+/* ===== 6. DADOS: ao vivo (lendo as tabelas escondidas) ou demonstração ===== */
+function goLive(){
+  live=true;
+  CFG.bc.forEach(i=>S.bc[i.n]=null);CFG.intl.forEach(i=>S.intl[i.n]=null);
+  SER.forEach(g=>CFG[g].forEach(i=>S.ser[g][i.n]=[]));
+  SIDES.forEach(k=>$('#'+k).innerHTML=liveSide(k));
+}
+function liveTick(){
+  let any=false;
+  const get=(it,k)=>{if(!it.pid)return null;const v=rd(it.pid,k);if(v)any=true;return v};
+  const bc=CFG.bc.map(i=>get(i,'pcp')),intl=CFG.intl.map(i=>get(i,'pcp'));
+  const pts=SER.map(g=>CFG[g].map(i=>get(i,CFG.src[g])));
+  const sd=SIDES.map(k=>({last:get(CFG.side[k],'last'),pcp:get(CFG.side[k],'pcp')}));
+  if(!any&&!live)return;
+  if(!live)goLive();
+  CFG.bc.forEach((i,x)=>S.bc[i.n]=bc[x]);CFG.intl.forEach((i,x)=>S.intl[i.n]=intl[x]);
+  SER.forEach((g,gi)=>CFG[g].forEach((i,x)=>{const v=pts[gi][x];if(v!==null){const a=S.ser[g][i.n];a.push(v);if(a.length>MAX)a.shift()}}));
+  SIDES.forEach((k,x)=>{const s=S.lv[k],v=sd[x],q=Q[CFG.side[k].pid]||{},nq=z=>z==null||z===''?null:(typeof z==='number'?z:num(String(z)));
+    s.qh=nq(q.high);s.ql=nq(q.low);s.qc=nq(q.last_close);s.qo=nq(q.open);
+    if(v.last){s.last=v.last;s.pcp=v.pcp;s.hi=s.hi===null?v.last:Math.max(s.hi,v.last);s.lo=s.lo===null?v.last:Math.min(s.lo,v.last);s.ph.push(v.last);if(s.ph.length>MAX)s.ph.shift()}});
+}
+function mockTick(){
+  const step=(a,s)=>{a.push(last(a)+(Math.random()-.5)*s);a.shift()};
+  SIDES.forEach(k=>{const s=S[k],c=CFG.side[k];
+    step(s.fl.b,10);step(s.fl.e,10);step(s.ag.b,8);step(s.ag.e,8);
+    s.fe=last(s.fl.e)*c.escala;s.fb=last(s.fl.b)*c.escala;
+    s.ae=Math.round(200+last(s.ag.e));s.ab=Math.round(40+last(s.ag.b)/2);s.hft=Math.round(s.hft+(Math.random()-.5)*60);
+    s.px+=(Math.random()-.5)*c.aj*.0006;s.hi=Math.max(s.hi,s.px);s.lo=Math.min(s.lo,s.px)});
+  for(const n in S.bc)S.bc[n]=clamp(S.bc[n]+(Math.random()-.5)*.08,-3,3.5);
+  for(const n in S.intl)S.intl[n]=clamp(S.intl[n]+(Math.random()-.5)*.08,-3,3);
+  SER.forEach(g=>{for(const n in S.ser[g])step(S.ser[g][n],g==='juros'?.03:.2)});
+}
+function loop(){
+  liveTick();if(!live)mockTick();
+  $('#badge').textContent=live?'Ao vivo (Investing)':'Dados de demonstração';
+  $('#badge').className='badge'+(live?' live':'');
+  $('#clock').textContent=new Date().toLocaleTimeString('pt-BR');
+  draw();
+}
+loop();setInterval(loop,1000);
+</script>
+</body>
+</html>
